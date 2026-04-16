@@ -1,0 +1,21 @@
+{
+  "name": "caido-hackvertor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "caido-dev build",
+    "watch": "caido-dev watch"
+  },
+  "devDependencies": {
+    "@caido-community/dev": "latest",
+    "@caido/sdk-backend": "latest",
+    "@caido/sdk-frontend": "latest",
+    "@caido/tailwindcss": "^0.1.0",
+    "@vitejs/plugin-vue": "^5.0.0",
+    "postcss-prefixwrap": "^1.57.2",
+    "tailwindcss-primeui": "^0.6.1",
+    "typescript": "^5.0.0",
+    "vue": "^3.4.0"
+  }
+}

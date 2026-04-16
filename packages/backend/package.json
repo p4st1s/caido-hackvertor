@@ -1,0 +1,11 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "devDependencies": {
+    "@caido/quickjs-types": "latest",
+    "typescript": "^5.0.0"
+  }
+}
