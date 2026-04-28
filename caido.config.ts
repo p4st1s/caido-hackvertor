@@ -10,7 +10,7 @@ const id = "hackvertor";
 export default {
   id,
   name: "Hackvertor",
-  version: "0.0.1",
+  version: "0.2.0",
   description: "Tag-based data transformation and encoding toolkit",
   author: {
     name: "p4st1s"
