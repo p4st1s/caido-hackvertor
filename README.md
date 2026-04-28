@@ -4,6 +4,8 @@ Tag-based data transformation plugin for [Caido](https://caido.io). Wrap any tex
 
 Made by [p4st1s](https://github.com/p4st1s) @ [Offenskill](https://offenskill.com).
 
+Kudos go to [@garethheyes](https://github.com/garethheyes) and [@PortSwigger](https://github.com/PortSwigger) for the original [HackVertor](https://github.com/PortSwigger/hackvertor) Burp Suite extension — this port stands on their shoulders.
+
 ## Syntax
 
 ```
