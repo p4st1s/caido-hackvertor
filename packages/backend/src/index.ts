@@ -14,15 +14,9 @@ export function init(sdk: SDK<API, BackendEvents>) {
         return undefined;
       }
       const processed = convert(rawStr);
-      sdk.console.log("[HV] processed:", processed.slice(0, 200));
-      if (processed === rawStr) {
-        sdk.console.log("[HV] no change, skipping");
-        return undefined;
-      }
+      if (processed === rawStr) return undefined;
       request.setRaw(Buffer.from(processed, "utf8"));
-      const spec = request.toSpec();
-      sdk.console.log("[HV] toSpec ok:", JSON.stringify(spec).slice(0, 200));
-      return spec;
+      return request.toSpec();
     } catch(e) {
       sdk.console.log("[HV] ERROR:", String(e));
       setTimeout(() => sdk.api.send("upstream-error", String(e)), 0);

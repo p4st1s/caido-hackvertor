@@ -29,13 +29,20 @@
       <div class="hv-toolbar">
         <button class="hv-btn" @click="clearInput" :disabled="showSettings">Clear</button>
         <button class="hv-btn" @click="copyPreview" :disabled="showSettings">Copy</button>
+        <button
+          v-if="sdk"
+          class="hv-btn"
+          :disabled="showSettings || isError || !hasConn"
+          :title="!hasConn ? 'Send a request to Hackvertor first (right-click → Send to Hackvertor)' : 'Send processed output to Replay (Ctrl+R)'"
+          @click="sendToReplay"
+        >Send to Replay</button>
         <button class="hv-btn hv-btn-settings" :class="{ 'hv-btn-active': showSettings }" @click="showSettings = !showSettings">Settings</button>
       </div>
 
       <div v-if="!showSettings" class="hv-panels">
         <div class="hv-panel">
           <div class="hv-panel-label">Input</div>
-          <textarea ref="inputEl" v-model="inputText" class="hv-textarea" spellcheck="false" />
+          <InputEditor ref="inputEditor" v-model="inputText" />
         </div>
         <div class="hv-divider" />
         <div class="hv-panel">
@@ -93,9 +100,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, inject } from "vue";
 import { convert } from "./engine";
 import { TAGS, CATEGORIES, type TagDef } from "./tags";
+import type { API } from "@caido/sdk-frontend";
+import InputEditor from "./InputEditor.vue";
+
+const sdk = inject<API>("sdk");
+
+const HV_CONN_KEY = "hv_connection";
+
+const hasConn = ref(!!localStorage.getItem(HV_CONN_KEY));
+const isError = computed(() => previewText.value.startsWith("Error:"));
 
 const DEFAULTS_KEY = "hv_tag_defaults";
 
@@ -105,7 +121,7 @@ function loadDefaults(): Record<string, string[]> {
 
 const inputText = ref("");
 const search = ref("");
-const inputEl = ref<HTMLTextAreaElement>();
+const inputEditor = ref<InstanceType<typeof InputEditor>>();
 const openCategories = ref<Set<string>>(new Set(["Encode", "Decode"]));
 const showSettings = ref(false);
 const tagDefaults = ref<Record<string, string[]>>(loadDefaults());
@@ -149,21 +165,75 @@ const HV_LOAD_KEY = "hv_load";
 const onHackvertorSearch = () => { showSearch.value = true; };
 const onHackvertorLoad = (e: Event) => {
   const content = (e as CustomEvent<string>).detail;
-  if (content) inputText.value = content;
+  if (content) {
+    inputText.value = content;
+    hasConn.value = !!localStorage.getItem(HV_CONN_KEY);
+  }
 };
+
+async function sendToReplay() {
+  if (!sdk || isError.value) return;
+  const connRaw = localStorage.getItem(HV_CONN_KEY);
+  if (!connRaw) return;
+  try {
+    const conn = JSON.parse(connRaw) as { host: string; port: number; isTls: boolean };
+    const host = String(conn.host);
+    const port = Number(conn.port);
+    const isTls = Boolean(conn.isTls);
+    const raw = inputText.value.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n");
+
+    const scheme = isTls ? "https" : "http";
+    const stdPort = isTls ? 443 : 80;
+    const collectionUrl = port === stdPort ? `${scheme}://${host}` : `${scheme}://${host}:${port}`;
+    const collections = sdk.replay.getCollections();
+    const match = collections.find(c =>
+      c.name === collectionUrl ||
+      c.name === host ||
+      c.name === `${host}:${port}`
+    );
+
+    const result = await sdk.graphql.createReplaySession({
+      input: {
+        collectionId: match?.id,
+        requestSource: {
+          raw: {
+            raw,
+            connectionInfo: { host, port, isTLS: isTls, SNI: host },
+          },
+        },
+      },
+    });
+
+    const session = result.createReplaySession.session;
+    if (session) sdk.replay.openTab(session.id, { select: true });
+    sdk.navigation.goTo({ id: "Replay" } as any);
+  } catch (e) {
+    sdk.window.showToast(`Failed to send to Replay: ${e}`, { variant: "error" });
+  }
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.key === "r" && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
+    sendToReplay();
+  }
+}
 
 onMounted(() => {
   document.addEventListener("hackvertor:search", onHackvertorSearch);
   document.addEventListener("hackvertor:load", onHackvertorLoad);
+  window.addEventListener("keydown", onKeydown);
   const pending = localStorage.getItem(HV_LOAD_KEY);
   if (pending) {
     inputText.value = pending;
     localStorage.removeItem(HV_LOAD_KEY);
+    hasConn.value = !!localStorage.getItem(HV_CONN_KEY);
   }
 });
 onUnmounted(() => {
   document.removeEventListener("hackvertor:search", onHackvertorSearch);
   document.removeEventListener("hackvertor:load", onHackvertorLoad);
+  window.removeEventListener("keydown", onKeydown);
 });
 
 watch(showSearch, (val) => {
@@ -223,13 +293,7 @@ function toggleCategory(cat: string) {
 }
 
 function clearInput() {
-  const el = inputEl.value;
-  if (!el) return;
-  el.focus();
-  el.select();
-  if (!document.execCommand("insertText", false, "")) {
-    inputText.value = "";
-  }
+  inputEditor.value?.clear();
 }
 
 function copyPreview() {
@@ -237,22 +301,13 @@ function copyPreview() {
 }
 
 function insertTag(tag: TagDef) {
-  const el = inputEl.value;
-  if (!el) return;
-  const start = el.selectionStart ?? inputText.value.length;
-  const end = el.selectionEnd ?? inputText.value.length;
-  const selected = inputText.value.slice(start, end);
   const argValues = tag.args.map((a, i) => tagDefaults.value[tag.name]?.[i] ?? a.default);
   const argStr = tag.args.length ? `(${argValues.map(v => `"${v}"`).join(",")})` : "";
-  const insertion = tag.hasInput
-    ? `<@${tag.name}${argStr}>${selected}</@${tag.name}>`
-    : `<@${tag.name}${argStr}/>`;
-  el.focus();
-  el.setSelectionRange(start, end);
-  if (!document.execCommand("insertText", false, insertion)) {
-    inputText.value = inputText.value.slice(0, start) + insertion + inputText.value.slice(end);
-    const cursor = start + insertion.length;
-    nextTick(() => el.setSelectionRange(cursor, cursor));
+  if (tag.hasInput === false) {
+    inputEditor.value?.insertSelf(`<@${tag.name}${argStr}/>`);
+  } else {
+    const sel = inputEditor.value?.getSelection() ?? "";
+    inputEditor.value?.insertTag(`<@${tag.name}${argStr}>`, `</@${tag.name}>`, sel);
   }
 }
 </script>
@@ -434,19 +489,6 @@ function insertTag(tag: TagDef) {
   background: var(--c-bg-default, #111111);
 }
 
-.hv-textarea {
-  flex: 1;
-  resize: none;
-  background: var(--c-bg-subtle, #141414);
-  color: var(--c-fg-default, #e5e5e5);
-  border: none;
-  outline: none;
-  padding: 10px;
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.6;
-  caret-color: var(--c-accent-default, #e8531d);
-}
 
 .hv-preview {
   flex: 1;

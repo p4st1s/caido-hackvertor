@@ -5,6 +5,7 @@ import type { BackendEvents } from "../../backend/src/index";
 import HackvertorPanel from "./HackvertorPanel.vue";
 import ReplayView from "./ReplayView.vue";
 import TagSearchDialog from "./TagSearchDialog.vue";
+import { hackvertorTagHighlight } from "./editor-extension";
 import "./styles/index.css";
 
 export function init(sdk: API<{}, BackendEvents>) {
@@ -20,6 +21,7 @@ export function init(sdk: API<{}, BackendEvents>) {
   try { setupTagCommands(sdk); } catch (e) { console.error("[HV] setupTagCommands", e); }
   try { setupTagSearch(sdk); } catch (e) { console.error("[HV] setupTagSearch", e); }
   try { setupSendToPanel(sdk); } catch (e) { console.error("[HV] setupSendToPanel", e); }
+  try { setupEditorExtensions(sdk); } catch (e) { console.error("[HV] setupEditorExtensions", e); }
   setupAutoUpstream(sdk);
 }
 
@@ -147,14 +149,14 @@ function setupTagSearch(sdk: API) {
     },
   });
 
-  try { sdk.shortcuts.register("hackvertor.search-tags", ["shift", "ctrl", "h"]); } catch {}
+  try { sdk.shortcuts.register("hackvertor.search-tags", ["Control", "h"]); } catch {}
   sdk.menu.registerItem({ type: "Request", commandId: "hackvertor.search-tags", leadingIcon: "fas fa-magnifying-glass" });
   sdk.commandPalette.register("hackvertor.search-tags");
-  sdk.replay.addToSlot("session-toolbar-primary", { kind: "Command", commandId: "hackvertor.search-tags", icon: "fas fa-magnifying-glass" });
 }
 
 
 const HV_LOAD_KEY = "hv_load";
+const HV_CONN_KEY = "hv_connection";
 const HV_DEFAULTS_KEY = "hv_tag_defaults";
 
 function getUserArgStr(tagName: string, args: { default: string }[]): string {
@@ -173,24 +175,38 @@ function setupSendToPanel(sdk: API) {
     group: "Hackvertor",
     run: (ctx) => {
       let content = "";
-      const editorView = sdk.window.getActiveEditor()?.getEditorView();
-      if (editorView) {
-        content = editorView.state.doc.toString();
-      } else if (ctx.type === "RequestContext" || ctx.type === "ResponseContext") {
-        content = ctx.selection;
+      let conn: { host: string; port: number; isTls: boolean } | null = null;
+      if (ctx.type === "RequestContext") {
+        content = ctx.request.raw;
+        conn = { host: ctx.request.host, port: ctx.request.port, isTls: ctx.request.isTls };
+      } else if (ctx.type === "ResponseContext") {
+        content = ctx.response.raw;
+        conn = { host: ctx.request.host, port: ctx.request.port, isTls: ctx.request.isTls };
+      } else {
+        const editorView = sdk.window.getActiveEditor()?.getEditorView();
+        if (editorView) content = editorView.state.doc.toString();
       }
       if (content) {
         localStorage.setItem(HV_LOAD_KEY, content);
+        if (conn) localStorage.setItem(HV_CONN_KEY, JSON.stringify(conn));
         document.dispatchEvent(new CustomEvent("hackvertor:load", { detail: content }));
       }
-      try { (sdk.navigation as any).navigate("/hackvertor"); } catch {}
+      sdk.navigation.goTo("/hackvertor");
     },
   });
 
-  try { sdk.shortcuts.register("hackvertor.send-to-panel", ["shift", "ctrl", "y"]); } catch {}
+  try { sdk.shortcuts.register("hackvertor.send-to-panel", ["Control", "Shift", "y"]); } catch {}
   sdk.menu.registerItem({ type: "Request", commandId: "hackvertor.send-to-panel", leadingIcon: "fas fa-arrow-right-to-bracket" });
+  sdk.menu.registerItem({ type: "RequestRow", commandId: "hackvertor.send-to-panel", leadingIcon: "fas fa-arrow-right-to-bracket" });
+  sdk.menu.registerItem({ type: "Response", commandId: "hackvertor.send-to-panel", leadingIcon: "fas fa-arrow-right-to-bracket" });
   sdk.commandPalette.register("hackvertor.send-to-panel");
-  sdk.replay.addToSlot("session-toolbar-primary", { kind: "Command", commandId: "hackvertor.send-to-panel", icon: "fas fa-arrow-right-to-bracket" });
+}
+
+function setupEditorExtensions(sdk: API) {
+  sdk.replay.addRequestEditorExtension(hackvertorTagHighlight);
+  sdk.httpHistory.addRequestEditorExtension(hackvertorTagHighlight);
+  sdk.search.addRequestEditorExtension(hackvertorTagHighlight);
+  sdk.automate.addRequestEditorExtension(hackvertorTagHighlight);
 }
 
 function setupMainPanel(sdk: API) {
@@ -198,32 +214,31 @@ function setupMainPanel(sdk: API) {
   container.id = "plugin--hackvertor";
   container.style.cssText = "height:100%;display:flex;flex-direction:column;";
   const app = createApp(HackvertorPanel);
+  app.provide("sdk", sdk);
   app.mount(container);
   sdk.navigation.addPage("/hackvertor", { body: container });
   sdk.sidebar.registerItem("Hackvertor", "/hackvertor", { icon: "fas fa-code" });
 }
 
-function makeViewMode(sdk: API) {
-  return { label: "Hackvertor", view: { component: markRaw(ReplayView), props: { sdk } } };
+function makeViewMode() {
+  return { label: "Hackvertor", view: { component: markRaw(ReplayView) } };
 }
 
 function setupReplayViewMode(sdk: API) {
-  sdk.replay.addRequestViewMode(makeViewMode(sdk));
+  sdk.replay.addRequestViewMode(makeViewMode());
 }
 
 function setupInterceptViewMode(sdk: API) {
-  sdk.intercept.addRequestViewMode(makeViewMode(sdk));
+  sdk.intercept.addRequestViewMode(makeViewMode());
 }
 
 function setupHistoryViewMode(sdk: API) {
-  sdk.httpHistory.addRequestViewMode(makeViewMode(sdk));
+  sdk.httpHistory.addRequestViewMode(makeViewMode());
 }
 
 function setupAutomateViewMode(sdk: API) {
-  sdk.automate.addRequestViewMode(makeViewMode(sdk));
+  sdk.automate.addRequestViewMode(makeViewMode());
 }
-
-
 
 async function getBackendPluginId(sdk: API): Promise<string | undefined> {
   const packages = await sdk.graphql.pluginPackages();

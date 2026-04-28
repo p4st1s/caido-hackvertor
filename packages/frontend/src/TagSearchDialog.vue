@@ -28,7 +28,6 @@
 <script setup lang="ts">
 import { TAGS } from "./tags";
 
-defineProps<{}>();
 const emit = defineEmits<{ apply: [tagName: string]; close: [] }>();
 
 let selectedIndex = -1;
